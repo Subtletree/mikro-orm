@@ -938,7 +938,9 @@ export class UnitOfWork {
         }
       }
 
-      if (!isCreate && Object.keys(payload).length === 0) {
+      // the table owning the version column always needs its UPDATE, even with no own changes,
+      // as the version bump and the optimistic lock predicate can only live there
+      if (!isCreate && Object.keys(payload).length === 0 && !current.ownsVersionProperty()) {
         current = current.tptParent;
         continue;
       }
@@ -950,8 +952,11 @@ export class UnitOfWork {
         current as EntityMetadata<T>,
       );
 
+      // every table's change set describes the same entity, so they all need the original data
+      // for the optimistic lock and concurrency key checks
+      cs.originalEntity = originalChangeSet.originalEntity;
+
       if (current === meta) {
-        cs.originalEntity = originalChangeSet.originalEntity;
         leafCs = cs;
       } else {
         parentChangeSets.push(cs);
@@ -1621,10 +1626,12 @@ export class UnitOfWork {
     };
 
     const addToGroup = (cs: ChangeSet<any>) => {
-      // Skip stub TPT changesets with empty payload (e.g. leaf with no own-property changes on UPDATE)
+      // Skip stub TPT changesets with empty payload (e.g. leaf with no own-property changes on UPDATE),
+      // unless the table owns the version column, in which case it still needs the version bump
       if (
         (cs.type === ChangeSetType.UPDATE || cs.type === ChangeSetType.UPDATE_EARLY) &&
-        !Utils.hasObjectKeys(cs.payload)
+        !Utils.hasObjectKeys(cs.payload) &&
+        !(cs.meta.inheritanceType === 'tpt' && cs.meta.ownsVersionProperty())
       ) {
         return;
       }

@@ -453,18 +453,19 @@ export class ChangeSetPersister {
     options?: DriverMethodOptions,
   ): Promise<QueryResult<T>> {
     const cond = changeSet.getPrimaryKey(true) as Dictionary;
+    const versioned = meta.ownsVersionProperty();
     options = this.prepareOptions(meta, options, {
       convertCustomTypes: false,
+      // under TPT the payload can be empty when only another table of the hierarchy changed,
+      // the update is still needed there to bump the version and check the lock
+      versionBumpOnly: versioned,
     });
 
-    if (
-      meta.concurrencyCheckKeys.size === 0 &&
-      (!meta.versionProperty || changeSet.entity[meta.versionProperty] == null)
-    ) {
+    if (meta.concurrencyCheckKeys.size === 0 && (!versioned || changeSet.entity[meta.versionProperty] == null)) {
       return this.#driver.nativeUpdate(changeSet.meta.class, cond as FilterQuery<T>, changeSet.payload, options);
     }
 
-    if (meta.versionProperty) {
+    if (versioned) {
       cond[meta.versionProperty] = this.#platform.convertVersionValue(
         changeSet.entity[meta.versionProperty] as unknown as Date,
         meta.properties[meta.versionProperty],
@@ -483,7 +484,7 @@ export class ChangeSetPersister {
   ): Promise<void> {
     if (
       meta.concurrencyCheckKeys.size === 0 &&
-      (!meta.versionProperty || changeSets.every(cs => cs.entity[meta.versionProperty] == null))
+      (!meta.ownsVersionProperty() || changeSets.every(cs => cs.entity[meta.versionProperty] == null))
     ) {
       return;
     }
@@ -497,7 +498,7 @@ export class ChangeSetPersister {
         meta.primaryKeys.concat(...meta.concurrencyCheckKeys),
       ) as FilterQuery<T>;
 
-      if (meta.versionProperty) {
+      if (meta.ownsVersionProperty()) {
         // @ts-ignore
         cond[meta.versionProperty] = this.#platform.convertVersionValue(
           cs.entity[meta.versionProperty] as unknown as Date,
@@ -516,7 +517,9 @@ export class ChangeSetPersister {
         return o;
       }, {} as Dictionary),
     });
-    const res = await this.#driver.find<T>(meta.root.class, { $or } as FilterQuery<T>, options);
+    // under TPT the version column belongs to this table, which may sit below `meta.root`
+    const target = meta.inheritanceType === 'tpt' ? meta : meta.root;
+    const res = await this.#driver.find<T>(target.class, { $or } as FilterQuery<T>, options);
 
     if (res.length !== changeSets.length) {
       // a FK pointing to a composite PK is an array, so the values need to be compared deeply
@@ -548,7 +551,7 @@ export class ChangeSetPersister {
     options?: DriverMethodOptions,
   ) {
     const reloadProps =
-      meta.versionProperty && !this.#usesReturningStatement ? [meta.properties[meta.versionProperty]] : [];
+      meta.ownsVersionProperty() && !this.#usesReturningStatement ? [meta.properties[meta.versionProperty]] : [];
 
     if (changeSets[0].type === ChangeSetType.CREATE) {
       for (const prop of meta.props) {

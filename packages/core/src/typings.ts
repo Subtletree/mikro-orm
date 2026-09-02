@@ -1623,6 +1623,24 @@ export class EntityMetadata<Entity = any, Class extends EntityCtor<Entity> = Ent
   }
 
   /**
+   * Whether the version column lives on this entity's own table. TPT children inherit
+   * `versionProperty` from the root, but the column exists only on the table that declares it,
+   * so the version bump and the optimistic lock predicate belong to that table alone.
+   */
+  ownsVersionProperty(): boolean {
+    if (!this.versionProperty) {
+      return false;
+    }
+
+    if (this.inheritanceType !== 'tpt') {
+      return true;
+    }
+
+    // `ownProps` is always computed for TPT, the fallback keeps this closed over the root table
+    return this.ownProps?.some(prop => prop.name === this.versionProperty) ?? !this.tptParent;
+  }
+
+  /**
    * Creates a mapping from property names to field names.
    * @param alias - Optional alias to prefix field names. Can be a string (same for all) or a function (per-property).
    *                When provided, also adds toString() returning the alias for backwards compatibility with formulas.

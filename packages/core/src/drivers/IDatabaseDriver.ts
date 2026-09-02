@@ -462,6 +462,12 @@ export interface NativeInsertUpdateOptions<T> extends AbortQueryOptions {
   /** sql only */
   unionWhereStrategy?: 'union-all' | 'union';
   filters?: FilterOptions;
+  /**
+   * Emit the UPDATE even when the payload is empty, so the version can still be bumped.
+   * Needed for TPT, where only the table owning the version column may have nothing else to change.
+   * @internal
+   */
+  versionBumpOnly?: boolean;
   /** @internal */
   em?: EntityManager;
 }

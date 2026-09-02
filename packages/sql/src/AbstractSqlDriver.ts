@@ -1388,7 +1388,10 @@ export abstract class AbstractSqlDriver<
       where = (await this.applyUnionWhere(meta, where as ObjectQuery<T>, options, true)) as FilterQuery<T>;
     }
 
-    if (Utils.hasObjectKeys(data)) {
+    // the table owning the version column still needs its UPDATE with an empty payload, so the
+    // version gets bumped and the optimistic lock checked; flagged by the unit of work, as this
+    // must not change the semantics of an explicit `em.nativeUpdate()` with no data
+    if (Utils.hasObjectKeys(data) || (options.versionBumpOnly && !options.upsert)) {
       const qb = this.createQueryBuilder<T>(
         entityName,
         options.ctx,
@@ -1426,7 +1429,7 @@ export abstract class AbstractSqlDriver<
         // reload generated columns and version fields
         const returning: string[] = [];
         meta.props
-          .filter(prop => (prop.generated && !prop.primary) || prop.version)
+          .filter(prop => (prop.generated && !prop.primary) || (prop.version && meta.ownsVersionProperty()))
           .forEach(prop => returning.push(prop.name));
 
         qb.returning(returning as any);
@@ -1503,7 +1506,9 @@ export abstract class AbstractSqlDriver<
     }
 
     // reload generated columns and version fields
-    meta.props.filter(prop => prop.generated || prop.version || prop.primary).forEach(prop => returning.add(prop.name));
+    meta.props
+      .filter(prop => prop.generated || prop.primary || (prop.version && meta.ownsVersionProperty()))
+      .forEach(prop => returning.add(prop.name));
 
     const pkCond = Utils.flatten(meta.primaryKeys.map(pk => meta.properties[pk].fieldNames))
       .map(pk => `${this.platform.quoteIdentifier(pk)} = ?`)
@@ -1574,7 +1579,7 @@ export abstract class AbstractSqlDriver<
       });
     }
 
-    if (meta.versionProperty) {
+    if (meta.ownsVersionProperty()) {
       const versionProperty = meta.properties[meta.versionProperty];
       const quotedFieldName = this.platform.quoteIdentifier(versionProperty.fieldNames[0]);
       sql += `${quotedFieldName} = `;
