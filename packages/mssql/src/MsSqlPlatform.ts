@@ -14,6 +14,7 @@ import {
   QueryOrder,
   raw,
   RawQueryFragment,
+  type TransformContext,
   Type,
 } from '@mikro-orm/sql';
 // @ts-expect-error no types available
@@ -80,6 +81,22 @@ export class MsSqlPlatform extends AbstractSqlPlatform {
 
   override convertsJsonAutomatically(): boolean {
     return false;
+  }
+
+  /**
+   * JSON payloads are inlined into the statement text like any other value, and `escape()` only emits an
+   * `N'...'` literal for a `UnicodeString`. Without this the serialised JSON goes down as a non-Unicode
+   * literal and SQL Server best-fits every character the connection collation's code page lacks, so
+   * `Kāinga Ora` is silently stored as `Kainga Ora` — in an `nvarchar(max)` column, on write, with no error.
+   */
+  override convertJsonToDatabaseValue(value: unknown, context?: TransformContext): unknown {
+    const serialized = super.convertJsonToDatabaseValue(value, context);
+
+    if (typeof serialized !== 'string') {
+      return serialized;
+    }
+
+    return new UnicodeString(serialized);
   }
 
   override indexForeignKeys(): boolean {

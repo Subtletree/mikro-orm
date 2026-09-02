@@ -70,6 +70,18 @@ describe.each(Utils.keys(options))('JSON properties [%s]', type => {
     expect(res.value).toEqual({ foo: 'test' });
   });
 
+  test('non-ASCII characters in a JSON value survive a round trip', async () => {
+    const value = { name: 'Kāinga Ora' };
+    const { id } = orm.em.create(User, { value });
+    await orm.em.flush();
+    orm.em.clear();
+
+    // by primary key on purpose: querying by value would mangle the search literal the same way,
+    // and could match the mangled row, hiding the loss
+    const res = await orm.em.findOneOrFail(User, { id });
+    expect(res.value).toEqual(value);
+  });
+
   test('em.insertMany()', async () => {
     await orm.em.insertMany(User, [{ value: 'test' }, { value: 'test' }]);
     const res = await orm.em.findOneOrFail(User, { value: 'test' });
