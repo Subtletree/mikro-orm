@@ -2794,7 +2794,7 @@ export abstract class AbstractSqlDriver<
    * when filter conditions reference parent-table columns.
    * @internal
    */
-  protected addTPTParentJoinsForRelation<T extends object>(
+  addTPTParentJoinsForRelation<T extends object>(
     qb: AnyQueryBuilder<T>,
     leafMeta: EntityMetadata,
     leafAlias: string,
@@ -2805,6 +2805,12 @@ export abstract class AbstractSqlDriver<
 
     while (childMeta.tptParent) {
       const parentMeta = childMeta.tptParent;
+
+      // the same relation can be reached by both a populate hint and a criteria auto-join
+      if (qb.state.tptAlias[`${leafAlias}:${parentMeta.className}`]) {
+        return;
+      }
+
       const parentAlias = qb.getNextAlias(parentMeta.className);
       qb.createAlias(parentMeta.class, parentAlias);
       qb.state.tptAlias[`${leafAlias}:${parentMeta.className}`] = parentAlias;

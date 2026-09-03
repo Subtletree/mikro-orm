@@ -1593,11 +1593,39 @@ export class QueryBuilder<
 
     if (Utils.isPlainObject(cond)) {
       return Object.entries(cond).some(
-        ([key, value]) => key.startsWith(`${alias}.`) || this.condReferencesAlias(value, alias),
+        ([key, value]) => this.keyReferencesAlias(key, alias) || this.condReferencesAlias(value, alias),
       );
     }
 
     return false;
+  }
+
+  /**
+   * A condition key is qualified with the alias of the entity that declares the property, but a
+   * property inherited from a TPT parent renders against the alias of the table that physically
+   * holds the column. Resolve that mapping so the `on` clause is recognised as referencing the
+   * parent join and gets nested inside it.
+   */
+  private keyReferencesAlias(key: string, alias: string): boolean {
+    if (key.startsWith(`${alias}.`)) {
+      return true;
+    }
+
+    const idx = key.indexOf('.');
+
+    if (idx === -1) {
+      return false;
+    }
+
+    const keyAlias = key.slice(0, idx);
+    const prop = key.slice(idx + 1);
+
+    // only resolve for a known alias, so an unrelated prefix cannot fall back to the main entity
+    if (!this.#state.aliases[keyAlias] || Utils.isOperator(prop)) {
+      return false;
+    }
+
+    return this.helper.getTPTAliasForProperty(prop, keyAlias) === alias;
   }
 
   withSubQuery(subQuery: RawQueryFragment | NativeQueryBuilder, alias: string): this {
@@ -3224,6 +3252,20 @@ export class QueryBuilder<
       this.#state.joins[aliasedName].path ??= path;
     }
 
+    // A relation targeting a TPT sub-class needs its parent tables joined too, otherwise inherited
+    // columns referenced by `where`/`orderBy` have no table to resolve against. The populate path
+    // does this from `AbstractSqlDriver.getFieldsForJoinedLoad()`, but criteria auto-joins land here.
+    // `aliasedName` can miss an entry for m:n pivot joins, mirroring `nestReferencedJoins()` below
+    const targetMeta = this.#state.joins[aliasedName]?.prop?.targetMeta;
+
+    if (
+      targetMeta?.inheritanceType === 'tpt' &&
+      targetMeta.tptParent &&
+      [QueryType.SELECT, QueryType.COUNT].includes(this.type)
+    ) {
+      this.driver.addTPTParentJoinsForRelation(this, targetMeta, alias, path);
+    }
+
     this.nestReferencedJoins(this.#state.joins[aliasedName]);
 
     return { prop, key: aliasedName };
@@ -3997,6 +4039,8 @@ export class QueryBuilder<
         } else {
           join.cond = { ...join.cond, [k]: cond[k] };
         }
+
+        this.nestReferencedJoins(join);
       }
     }
   }
